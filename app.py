@@ -66,37 +66,36 @@ def append_row_to_gsheet(data_row, worksheet_name):
 df_diario = load_sheet_as_df('DIARIO', HEADERS_DIARIO)
 df_config = load_sheet_as_df('CONFIG', HEADERS_CONFIG)
 
-# Limpa nome das colunas: tira espaço e deixa tudo minúsculo pra comparar
+# Limpa nome das colunas: tira espaço
 df_config.columns = df_config.columns.str.strip()
 
-# --- PROCESSAR CONFIG - BLINDADO PRA MAIÚSCULA/MINÚSCULA ---
+# --- PROCESSAR CONFIG - BLINDADO ---
 qtd_aves_inicial = 0
 preco_racao_kg = 0.0
 data_alojamento = date.today()
 idade_inicial_semanas = 0
 
 if not df_config.empty:
-    # Converte numéricos
+    # Qtd Aves
     if 'Qtd_Aves_Inicial' in df_config.columns:
-        df_config['Qtd_Aves_Inicial'] = pd.to_numeric(df_config['Qtd_Aves_Inicial'], errors='coerce').fillna(0)
-        qtd_aves_inicial = int(df_config['Qtd_Aves_Inicial'].iloc[-1])
+        qtd_aves_inicial = int(pd.to_numeric(df_config['Qtd_Aves_Inicial'], errors='coerce').fillna(0).iloc[-1])
 
-    # Procura coluna de preço independente de maiúscula/minúscula
+    # Preço Ração - aceita kg, Kg, KG
     col_preco_match = [col for col in df_config.columns if col.lower() == 'preco_racao_kg']
     if col_preco_match:
         col_preco = col_preco_match[0]
-        df_config[col_preco] = pd.to_numeric(df_config[col_preco].astype(str).str.replace(',', '.'), errors='coerce').fillna(0)
-        preco_racao_kg = float(df_config[col_preco].iloc[-1])
+        preco_racao_kg = float(pd.to_numeric(df_config[col_preco].astype(str).str.replace(',', '.'), errors='coerce').fillna(0).iloc[-1])
 
-    # Data e idade
+    # Data Alojamento
     if 'Data_Alojamento' in df_config.columns:
         try:
             data_alojamento = pd.to_datetime(df_config['Data_Alojamento'].iloc[-1]).date()
         except:
             data_alojamento = date.today()
 
+    # Idade Inicial - LINHA 99 CORRIGIDA
     if 'Idade_Inicial_Semanas' in df_config.columns:
-        idade_inicial_semanas = int(pd.to_numeric(df_config['Idade_Inicial_Semanas'].iloc[-1], errors='coerce').fillna(0))
+        idade_inicial_semanas = int(pd.to_numeric(df_config['Idade_Inicial_Semanas'], errors='coerce').fillna(0).iloc[-1])
 
 # --- PROCESSAR DIÁRIO ---
 if not df_diario.empty:
@@ -142,8 +141,8 @@ with st.sidebar:
     st.header("⚙️ Configurar Lote Inicial")
     with st.form("form_config"):
         data_aloj = st.date_input("Data Alojamento", value=data_alojamento)
-        idade_ini = st.number_input("Idade Inicial Semanas", min_value=0, value=idade_inicial_semanas)
-        qtd_aves = st.number_input("Qtd Aves Inicial", min_value=0, value=qtd_aves_inicial)
+        idade_ini = st.number_input("Idade Inicial Semanas", min_value=0, value=int(idade_inicial_semanas))
+        qtd_aves = st.number_input("Qtd Aves Inicial", min_value=0, value=int(qtd_aves_inicial))
         preco_kg = st.number_input("Preço Ração R$/Kg", min_value=0.0, value=float(preco_racao_kg), step=0.01, format="%.2f")
 
         if st.form_submit_button("💾 Salvar Config"):
