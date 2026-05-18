@@ -2,5 +2,4 @@ streamlit
 gspread
 google-auth
 pandas
-plotly
-reportlab
+fpdf==1.7.2
