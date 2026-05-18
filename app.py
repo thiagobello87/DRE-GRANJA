@@ -150,8 +150,9 @@ if not df_prod.empty:
     df_prod.dropna(subset=['Data'], inplace=True)
     for col in ['Qtd_Ovos', 'Mortalidade', 'Consumo_Racao_Kg', 'Semana_Aves']:
         df_prod[col] = pd.to_numeric(df_prod[col], errors='coerce').fillna(0)
-    # CORREÇÃO AUTOMÁTICA: Se ração > 200kg/dia, divide por 10
-    df_prod.loc[df_prod['Consumo_Racao_Kg'] > 200, 'Consumo_Racao_Kg'] = df_prod['Consumo_Racao_Kg'] / 10
+    # CORREÇÃO AUTOMÁTICA CORRIGIDA: Se ração > 200kg/dia, divide por 10
+    mask = df_prod['Consumo_Racao_Kg'] > 200
+    df_prod.loc[mask, 'Consumo_Racao_Kg'] = df_prod.loc[mask, 'Consumo_Racao_Kg'] / 10
     df_prod['Mes'] = df_prod['Data'].dt.strftime('%Y-%m')
 
 qtd_aves_inicial = 0
@@ -332,8 +333,9 @@ if not df_prod_mes.empty and postura_perc > 0:
             aves_projetadas = aves_projetadas * 0.999 # mortalidade 0.1% semana
 
     ovos_total_projetado = sum(ovos_projetados)
-    receita_projetada = (ovos_total_projetado / 30) * (receitas / (total_ovos/30) if total_ovos > 0 else 0.5) # estima preço médio
-    custo_projetado = (ovos_total_projetado * custo_por_ovo)
+    preco_medio_ovo = receitas / total_ovos if total_ovos > 0 else 0.5
+    receita_projetada = ovos_total_projetado * preco_medio_ovo
+    custo_projetado = ovos_total_projetado * custo_por_ovo
     lucro_projetado = receita_projetada - custo_projetado
 
     col_proj1, col_proj2, col_proj3 = st.columns(3)
