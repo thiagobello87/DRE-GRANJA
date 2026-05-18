@@ -33,14 +33,20 @@ def load_data():
     }
     dataframes = {}
     for sheet_name, headers in sheets_info.items():
-        sh = spreadsheet.worksheet(sheet_name)
-        if sh.row_count <= 1:
+        try:
+            sh = spreadsheet.worksheet(sheet_name)
+        except gspread.exceptions.WorksheetNotFound:
+            sh = spreadsheet.add_worksheet(title=sheet_name, rows="1000", cols="20")
+            sh.update('A1', [headers])
+
+        if sh.row_count <= 1 or not sh.row_values(1):
             sh.clear()
             sh.update('A1', [headers])
             df = pd.DataFrame(columns=headers)
         else:
             df = pd.DataFrame(sh.get_all_records())
             df = df.reindex(columns=headers, fill_value=0)
+
         dataframes[sheet_name] = df
     return dataframes["CONFIG"], dataframes["MOVIMENTACOES"], dataframes["PRODUCAO"]
 
@@ -149,7 +155,6 @@ custo_por_ave = custos / aves_vivas if aves_vivas > 0 else 0
 mortalidade_perc = (total_mortalidade / qtd_aves_inicial * 100) if qtd_aves_inicial > 0 else 0
 postura_perc = (total_ovos / (aves_vivas * 30) * 100) if aves_vivas > 0 else 0
 
-# DEBUG FICA AQUI - ENTRE INDICADORES E GRÁFICOS
 with st.expander("🔍 DEBUG - Ver dados brutos", expanded=False):
     st.write("**CONFIG:**", df_config)
     st.write("**PRODUCAO COMPLETA:**", df_prod)
