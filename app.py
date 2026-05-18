@@ -154,10 +154,11 @@ custo_por_ovo = custos / total_ovos if total_ovos > 0 else 0
 custo_por_ave = custos / aves_vivas if aves_vivas > 0 else 0
 mortalidade_perc = (total_mortalidade / qtd_aves_inicial * 100) if qtd_aves_inicial > 0 else 0
 
-# Postura: Ovos / (Aves Vivas * Dias do Mês)
-dias_mes = df_prod_mes['Data'].nunique() if not df_prod_mes.empty else 1
-postura_perc = (total_ovos / (aves_vivas * dias_mes) * 100) if aves_vivas > 0 and dias_mes > 0 else 0
-# Conversão: Kg Ração / Dúzia
+# % Postura corrigido: só divide pelos dias que tiveram lançamento
+dias_com_producao = df_prod_mes['Data'].nunique() if not df_prod_mes.empty else 0
+postura_perc = (total_ovos / (aves_vivas * dias_com_producao) * 100) if aves_vivas > 0 and dias_com_producao > 0 else 0
+
+# Conversão: Kg Ração / Dúzia de Ovos
 conversao = (total_racao / (total_ovos / 12)) if total_ovos > 0 else 0
 
 st.subheader("📊 Resumo Financeiro")
@@ -192,9 +193,10 @@ with c1:
 with c2:
     st.subheader("Curva de Postura por Semana")
     if not df_prod_mes.empty:
-        # Calcula % postura por dia
-        df_prod_mes['Postura_Dia'] = (df_prod_mes['Qtd_Ovos'] / (aves_vivas + df_prod_mes['Mortalidade'])) * 100
-        df_postura = df_prod_mes.groupby('Semana_Aves')['Postura_Dia'].mean().reset_index()
+        df_postura_dia = df_prod_mes.copy()
+        df_postura_dia['Aves_Dia'] = aves_vivas + df_postura_dia['Mortalidade'].cumsum()
+        df_postura_dia['Postura_Dia'] = (df_postura_dia['Qtd_Ovos'] / df_postura_dia['Aves_Dia']) * 100
+        df_postura = df_postura_dia.groupby('Semana_Aves')['Postura_Dia'].mean().reset_index()
         fig2 = px.line(df_postura, x='Semana_Aves', y='Postura_Dia', markers=True,
                        title="% Postura Média por Semana das Aves")
         fig2.update_layout(yaxis_title="% Postura", xaxis_title="Semana das Aves")
