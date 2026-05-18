@@ -27,14 +27,23 @@ def get_gsheet():
 @st.cache_data(ttl=60)
 def load_data():
     spreadsheet = get_gsheet()
-    sh_config = spreadsheet.worksheet("CONFIG")
-    sh_mov = spreadsheet.worksheet("MOVIMENTACOES")
-    sh_prod = spreadsheet.worksheet("PRODUCAO")
-
-    df_config = pd.DataFrame(sh_config.get_all_records(expected_headers=HEADERS_CONFIG))
-    df_mov = pd.DataFrame(sh_mov.get_all_records(expected_headers=HEADERS_MOVIMENTACOES))
-    df_prod = pd.DataFrame(sh_prod.get_all_records(expected_headers=HEADERS_PRODUCAO))
-    return df_config, df_mov, df_prod
+    sheets_info = {
+        "CONFIG": HEADERS_CONFIG,
+        "MOVIMENTACOES": HEADERS_MOVIMENTACOES,
+        "PRODUCAO": HEADERS_PRODUCAO
+    }
+    dataframes = {}
+    for sheet_name, headers in sheets_info.items():
+        sh = spreadsheet.worksheet(sheet_name)
+        if sh.row_count <= 1:
+            sh.clear()
+            sh.update('A1', [headers])
+            df = pd.DataFrame(columns=headers)
+        else:
+            df = pd.DataFrame(sh.get_all_records())
+            df = df.reindex(columns=headers, fill_value=0)
+        dataframes[sheet_name] = df
+    return dataframes["CONFIG"], dataframes["MOVIMENTACOES"], dataframes["PRODUCAO"]
 
 def append_row(sheet_name, row_data):
     spreadsheet = get_gsheet()
@@ -53,6 +62,7 @@ except Exception as e:
 if not df_mov.empty:
     df_mov['Valor'] = pd.to_numeric(df_mov['Valor'], errors='coerce').fillna(0)
     df_mov['Data'] = pd.to_datetime(df_mov['Data'], format='%d/%m/%Y', errors='coerce')
+    df_mov.dropna(subset=['Data'], inplace=True)
     for col in ['Descricao', 'Categoria', 'Tipo']:
         df_mov[col] = df_mov[col].astype(str).str.strip().str.title()
     df_mov['Mes'] = df_mov['Data'].dt.strftime('%Y-%m')
@@ -60,6 +70,7 @@ if not df_mov.empty:
 # TRATAMENTO PRODUCAO
 if not df_prod.empty:
     df_prod['Data'] = pd.to_datetime(df_prod['Data'], format='%d/%m/%Y', errors='coerce')
+    df_prod.dropna(subset=['Data'], inplace=True)
     for col in ['Qtd_Ovos', 'Mortalidade', 'Consumo_Racao_Kg', 'Semana_Aves']:
         df_prod[col] = pd.to_numeric(df_prod[col], errors='coerce').fillna(0)
 
@@ -67,7 +78,7 @@ if not df_prod.empty:
 qtd_aves_inicial = 0
 if not df_config.empty:
     df_config['Qtd_Aves_Inicial'] = pd.to_numeric(df_config['Qtd_Aves_Inicial'], errors='coerce').fillna(0)
-    qtd_aves_inicial = df_config['Qtd_Aves_Inicial'].iloc[-1] # Pega o último registro
+    qtd_aves_inicial = df_config['Qtd_Aves_Inicial'].iloc[-1] if not df_config.empty else 0
 
 # SIDEBAR - FILTROS E CADASTROS
 st.sidebar.header("Filtros")
@@ -77,7 +88,7 @@ if not df_mov.empty:
     df_mov_filtrado = df_mov[df_mov['Mes'] == mes_selecionado]
 else:
     mes_selecionado = date.today().strftime('%Y-%m')
-    df_mov_filtrado = df_mov
+    df_mov_filtrado = pd.DataFrame(columns=HEADERS_MOVIMENTACOES)
 
 st.sidebar.header("Lançamentos Rápidos")
 
@@ -134,7 +145,7 @@ lucro_liquido = lucro_bruto - despesas
 margem = (lucro_liquido / receitas * 100) if receitas > 0 else 0
 
 # CÁLCULOS PRODUÇÃO
-df_prod_mes = df_prod[df_prod['Data'].dt.strftime('%Y-%m') == mes_selecionado]
+df_prod_mes = df_prod[df_prod['Data'].dt.strftime('%Y-%m') == mes_selecionado] if not df_prod.empty else pd.DataFrame(columns=HEADERS_PRODUCAO)
 total_ovos = df_prod_mes['Qtd_Ovos'].sum()
 total_mortalidade = df_prod_mes['Mortalidade'].sum()
 total_racao = df_prod_mes['Consumo_Racao_Kg'].sum()
@@ -143,7 +154,7 @@ aves_vivas = qtd_aves_inicial - total_mortalidade
 custo_por_ovo = custos / total_ovos if total_ovos > 0 else 0
 custo_por_ave = custos / aves_vivas if aves_vivas > 0 else 0
 mortalidade_perc = (total_mortalidade / qtd_aves_inicial * 100) if qtd_aves_inicial > 0 else 0
-postura_perc = (total_ovos / (aves_vivas * 30) * 100) if aves_vivas > 0 else 0 # 30 dias
+postura_perc = (total_ovos / (aves_vivas * 30) * 100) if aves_vivas > 0 else 0
 
 # MÉTRICAS FINANCEIRAS
 st.subheader("📊 Resumo Financeiro")
