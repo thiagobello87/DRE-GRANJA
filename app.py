@@ -138,7 +138,7 @@ except Exception as e:
     st.stop()
 
 if not df_mov.empty:
-    df_mov['Valor'] = pd.to_numeric(df_mov['Valor'], errors='coerce').fillna(0)
+    df_mov['Valor'] = pd.to_numeric(df_mov['Valor'], errors='coerce').fillna(0).astype(float)
     df_mov['Data'] = pd.to_datetime(df_mov['Data'], dayfirst=True, errors='coerce')
     df_mov.dropna(subset=['Data'], inplace=True)
     for col in ['Descricao', 'Categoria', 'Tipo']:
@@ -149,10 +149,10 @@ if not df_prod.empty:
     df_prod['Data'] = pd.to_datetime(df_prod['Data'], dayfirst=True, errors='coerce')
     df_prod.dropna(subset=['Data'], inplace=True)
     for col in ['Qtd_Ovos', 'Mortalidade', 'Consumo_Racao_Kg', 'Semana_Aves']:
-        df_prod[col] = pd.to_numeric(df_prod[col], errors='coerce').fillna(0)
-    # CORREÇÃO AUTOMÁTICA CORRIGIDA: Se ração > 200kg/dia, divide por 10
+        df_prod[col] = pd.to_numeric(df_prod[col], errors='coerce').fillna(0).astype(float)
+    # CORREÇÃO AUTOMÁTICA: Se ração > 200kg/dia, divide por 10
     mask = df_prod['Consumo_Racao_Kg'] > 200
-    df_prod.loc[mask, 'Consumo_Racao_Kg'] = df_prod.loc[mask, 'Consumo_Racao_Kg'] / 10
+    df_prod.loc[mask, 'Consumo_Racao_Kg'] = df_prod.loc[mask, 'Consumo_Racao_Kg'].div(10)
     df_prod['Mes'] = df_prod['Data'].dt.strftime('%Y-%m')
 
 qtd_aves_inicial = 0
