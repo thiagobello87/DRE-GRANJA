@@ -28,11 +28,22 @@ def connect_to_gsheet():
 spreadsheet = connect_to_gsheet()
 
 # --- FUNÇÕES AUXILIARES ---
+def normalize_header(header):
+    return str(header).strip().lower().replace(' ', '_').replace('ç','c').replace('ã','a').replace('õ','o')
+
 def load_sheet_as_df(worksheet_name, headers):
     try:
         worksheet = spreadsheet.worksheet(worksheet_name)
         data = worksheet.get_all_records()
         df = pd.DataFrame(data)
+
+        # Normaliza cabeçalhos da planilha e os esperados
+        df.columns = [normalize_header(col) for col in df.columns]
+        headers_norm = {normalize_header(h): h for h in headers}
+
+        # Renomeia colunas pra padrão do código
+        df = df.rename(columns={col: headers_norm[col] for col in df.columns if col in headers_norm})
+
         # Garante que todas as colunas existam
         for col in headers:
             if col not in df.columns:
@@ -66,34 +77,25 @@ def append_row_to_gsheet(data_row, worksheet_name):
 df_diario = load_sheet_as_df('DIARIO', HEADERS_DIARIO)
 df_config = load_sheet_as_df('CONFIG', HEADERS_CONFIG)
 
-# Limpa nome das colunas: tira espaço
-df_config.columns = df_config.columns.str.strip()
-
-# --- PROCESSAR CONFIG - BLINDADO ---
+# --- PROCESSAR CONFIG ---
 qtd_aves_inicial = 0
 preco_racao_kg = 0.0
 data_alojamento = date.today()
 idade_inicial_semanas = 0
 
 if not df_config.empty:
-    # Qtd Aves
     if 'Qtd_Aves_Inicial' in df_config.columns:
         qtd_aves_inicial = int(pd.to_numeric(df_config['Qtd_Aves_Inicial'], errors='coerce').fillna(0).iloc[-1])
 
-    # Preço Ração - aceita kg, Kg, KG
-    col_preco_match = [col for col in df_config.columns if col.lower() == 'preco_racao_kg']
-    if col_preco_match:
-        col_preco = col_preco_match[0]
-        preco_racao_kg = float(pd.to_numeric(df_config[col_preco].astype(str).str.replace(',', '.'), errors='coerce').fillna(0).iloc[-1])
+    if 'Preco_Racao_Kg' in df_config.columns:
+        preco_racao_kg = float(pd.to_numeric(df_config['Preco_Racao_Kg'].astype(str).str.replace(',', '.'), errors='coerce').fillna(0).iloc[-1])
 
-    # Data Alojamento
     if 'Data_Alojamento' in df_config.columns:
         try:
             data_alojamento = pd.to_datetime(df_config['Data_Alojamento'].iloc[-1]).date()
         except:
             data_alojamento = date.today()
 
-    # Idade Inicial - LINHA 99 CORRIGIDA
     if 'Idade_Inicial_Semanas' in df_config.columns:
         idade_inicial_semanas = int(pd.to_numeric(df_config['Idade_Inicial_Semanas'], errors='coerce').fillna(0).iloc[-1])
 
@@ -107,11 +109,8 @@ if not df_diario.empty:
     for col in numeric_cols:
         df_diario[col] = pd.to_numeric(df_diario[col].astype(str).str.replace(',', '.'), errors='coerce').fillna(0)
 
-    # Calcula aves vivas
     df_diario['Aves_Vivas'] = qtd_aves_inicial - df_diario['Mortalidade'].cumsum()
     df_diario['%_Postura'] = (df_diario['Ovos_Coletados'] / df_diario['Aves_Vivas'] * 100).fillna(0)
-
-    # Custo Ração calculado
     df_diario['Custo_Racao_Calculado'] = df_diario['Consumo_Racao_Kg'] * preco_racao_kg
     df_diario['Custo_Total_Dia'] = df_diario['Custos_Dia'] + df_diario['Custo_Racao_Calculado']
 
