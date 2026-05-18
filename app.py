@@ -2,27 +2,37 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from datetime import datetime, date
-from streamlit_gsheets import GSheetsConnection
+import gspread
+from google.oauth2.service_account import Credentials
 
 st.set_page_config(page_title="DRE Granja", layout="wide")
 st.title("🐔 Sistema DRE - Granja")
 
-# Conexão com Google Sheets
-conn = st.connection("gsheets", type=GSheetsConnection)
+# Conexão Google Sheets via Secrets
+scope = ['https://spreadsheets.google.com/feeds','https://www.googleapis.com/auth/drive']
+creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
+client = gspread.authorize(creds)
+sheet = client.open_by_url(st.secrets["private_gsheets_url"])
 
 # Função pra carregar dados
-@st.cache_data(ttl=5)
-def load_data(worksheet):
+def load_worksheet(name):
     try:
-        data = conn.read(worksheet=worksheet, ttl=5)
-        return data.dropna(how="all")
+        ws = sheet.worksheet(name)
+        data = pd.DataFrame(ws.get_all_records())
+        return data
     except:
         return pd.DataFrame()
 
+# Função pra salvar dados
+def save_worksheet(name, df):
+    ws = sheet.worksheet(name)
+    ws.clear()
+    ws.update([df.columns.values.tolist()] + df.values.tolist())
+
 # Carrega as 3 abas
-df_mov = load_data("MOVIMENTACOES")
-df_config = load_data("CONFIG")
-df_prod = load_data("PRODUCAO")
+df_mov = load_worksheet("MOVIMENTACOES")
+df_config = load_worksheet("CONFIG")
+df_prod = load_worksheet("PRODUCAO")
 
 # Sidebar para lançamentos financeiros
 with st.sidebar:
@@ -38,9 +48,8 @@ with st.sidebar:
     if st.button("Adicionar Lançamento"):
         novo = pd.DataFrame([{'Data':data.strftime('%Y-%m-%d'),'Tipo':tipo,'Categoria':categoria,'Descrição':desc,'Valor':valor}])
         df_mov = pd.concat([df_mov, novo], ignore_index=True)
-        conn.update(worksheet="MOVIMENTACOES", data=df_mov)
+        save_worksheet("MOVIMENTACOES", df_mov)
         st.success("Lançado no Google Sheets!")
-        st.cache_data.clear()
         st.rerun()
 
 # Abas principais
@@ -50,6 +59,7 @@ with tab1:
     st.header("Resumo Financeiro e Zootécnico")
     if not df_mov.empty:
         df_mov['Data'] = pd.to_datetime(df_mov['Data'])
+        df_mov['Valor'] = pd.to_numeric(df_mov['Valor'])
         receitas = df_mov[df_mov['Tipo']=='Receita']['Valor'].sum()
         despesas = df_mov[df_mov['Tipo']=='Despesa']['Valor'].sum()
         lucro = receitas - despesas
@@ -61,6 +71,10 @@ with tab1:
 
         # Indicadores Zootécnicos
         if not df_config.empty and not df_prod.empty:
+            df_config['Qtd_Aves_Inicial'] = pd.to_numeric(df_config['Qtd_Aves_Inicial'])
+            df_prod['Aves_Mortas'] = pd.to_numeric(df_prod['Aves_Mortas'])
+            df_prod['Qtd_Ovos'] = pd.to_numeric(df_prod['Qtd_Ovos'])
+
             aves_inicial = df_config['Qtd_Aves_Inicial'].iloc[0]
             total_mortas = df_prod['Aves_Mortas'].sum()
             aves_atual = aves_inicial - total_mortas
@@ -99,9 +113,8 @@ with tab2:
     if st.button("Adicionar Produção do Dia"):
         novo = pd.DataFrame([{'Data':data_prod.strftime('%Y-%m-%d'),'Qtd_Ovos':qtd_ovos,'Aves_Mortas':aves_mortas,'Racao_Kg':racao_kg}])
         df_prod = pd.concat([df_prod, novo], ignore_index=True)
-        conn.update(worksheet="PRODUCAO", data=df_prod)
+        save_worksheet("PRODUCAO", df_prod)
         st.success("Produção salva no Google Sheets!")
-        st.cache_data.clear()
         st.rerun()
 
     st.subheader("Histórico de Produção")
@@ -116,9 +129,14 @@ with tab3:
 with tab4:
     st.header("Configuração do Lote Atual")
 
-    data_padrao = date.today() if df_config.empty else pd.to_datetime(df_config['Data_Alojamento'].iloc[0]).date()
-    idade_padrao = 1 if df_config.empty else int(df_config['Idade_Inicial_Semanas'].iloc[0])
-    aves_padrao = 450 if df_config.empty else int(df_config['Qtd_Aves_Inicial'].iloc[0])
+    if not df_config.empty:
+        data_padrao = pd.to_datetime(df_config['Data_Alojamento'].iloc[0]).date()
+        idade_padrao = int(df_config['Idade_Inicial_Semanas'].iloc[0])
+        aves_padrao = int(df_config['Qtd_Aves_Inicial'].iloc[0])
+    else:
+        data_padrao = date.today()
+        idade_padrao = 1
+        aves_padrao = 450
 
     with st.form("config_form"):
         data_aloj = st.date_input("Data de Alojamento", value=data_padrao)
@@ -132,7 +150,6 @@ with tab4:
                 'Idade_Inicial_Semanas': idade_sem,
                 'Qtd_Aves_Inicial': qtd_aves
             }])
-            conn.update(worksheet="CONFIG", data=df_config)
+            save_worksheet("CONFIG", df_config)
             st.success("Configurações salvas no Google Sheets!")
-            st.cache_data.clear()
             st.rerun()
