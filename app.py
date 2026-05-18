@@ -153,14 +153,12 @@ aves_vivas = qtd_aves_inicial - total_mortalidade
 custo_por_ovo = custos / total_ovos if total_ovos > 0 else 0
 custo_por_ave = custos / aves_vivas if aves_vivas > 0 else 0
 mortalidade_perc = (total_mortalidade / qtd_aves_inicial * 100) if qtd_aves_inicial > 0 else 0
-postura_perc = (total_ovos / (aves_vivas * 30) * 100) if aves_vivas > 0 else 0
 
-with st.expander("🔍 DEBUG - Ver dados brutos", expanded=False):
-    st.write("**CONFIG:**", df_config)
-    st.write("**PRODUCAO COMPLETA:**", df_prod)
-    st.write("**PRODUCAO DO MÊS FILTRADO:**", df_prod_mes)
-    st.write("**Mês selecionado no filtro:**", mes_selecionado)
-    st.write("**Qtd Aves Inicial lida da planilha:**", qtd_aves_inicial)
+# Postura: Ovos / (Aves Vivas * Dias do Mês)
+dias_mes = df_prod_mes['Data'].nunique() if not df_prod_mes.empty else 1
+postura_perc = (total_ovos / (aves_vivas * dias_mes) * 100) if aves_vivas > 0 and dias_mes > 0 else 0
+# Conversão: Kg Ração / Dúzia
+conversao = (total_racao / (total_ovos / 12)) if total_ovos > 0 else 0
 
 st.subheader("📊 Resumo Financeiro")
 col1, col2, col3 = st.columns(3)
@@ -179,8 +177,8 @@ col8.metric("Aves Vivas", f"{aves_vivas:,.0f}")
 col9.metric("Mortalidade", f"{mortalidade_perc:.2f}%")
 col10, col11, col12 = st.columns(3)
 col10.metric("Consumo Ração", f"{total_racao:,.1f} Kg")
-col11.metric("Custo por Ave", f"R$ {custo_por_ave:.2f}")
-col12.metric("% Postura Mês", f"{postura_perc:.1f}%")
+col11.metric("Conversão / Dz", f"{conversao:.2f} Kg")
+col12.metric("% Postura", f"{postura_perc:.1f}%")
 
 c1, c2 = st.columns(2)
 with c1:
@@ -192,10 +190,14 @@ with c1:
         fig.update_layout(yaxis_title="Valor (R$)", xaxis_title="")
         st.plotly_chart(fig, use_container_width=True)
 with c2:
-    st.subheader("Evolução da Produção")
+    st.subheader("Curva de Postura por Semana")
     if not df_prod_mes.empty:
-        fig2 = px.line(df_prod_mes.sort_values('Data'), x='Data', y='Qtd_Ovos', markers=True,
-                       title="Ovos por Dia")
+        # Calcula % postura por dia
+        df_prod_mes['Postura_Dia'] = (df_prod_mes['Qtd_Ovos'] / (aves_vivas + df_prod_mes['Mortalidade'])) * 100
+        df_postura = df_prod_mes.groupby('Semana_Aves')['Postura_Dia'].mean().reset_index()
+        fig2 = px.line(df_postura, x='Semana_Aves', y='Postura_Dia', markers=True,
+                       title="% Postura Média por Semana das Aves")
+        fig2.update_layout(yaxis_title="% Postura", xaxis_title="Semana das Aves")
         st.plotly_chart(fig2, use_container_width=True)
 
 with st.expander("Ver Lançamentos Financeiros"):
