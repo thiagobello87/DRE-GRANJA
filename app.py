@@ -10,7 +10,13 @@ st.title("🐔 Sistema DRE - Granja")
 
 # Conexão Google Sheets via Secrets
 scope = ['https://spreadsheets.google.com/feeds','https://www.googleapis.com/auth/drive']
-creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
+import json
+
+# Pega o dict e já converte os \n da private_key
+service_account_info = dict(st.secrets["gcp_service_account"])
+service_account_info["private_key"] = service_account_info["private_key"].replace('\\n', '\n')
+
+creds = Credentials.from_service_account_info(service_account_info, scopes=scope)
 client = gspread.authorize(creds)
 sheet = client.open_by_url(st.secrets["private_gsheets_url"])
 
