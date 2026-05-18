@@ -14,9 +14,20 @@ from reportlab.lib import colors
 st.set_page_config(page_title="DRE Granja", page_icon="🐔", layout="wide")
 st.title("🐔 Sistema DRE - Granja")
 
-HEADERS_CONFIG = ['Data_Alojamento', 'Idade_Inicial_Semanas', 'Qtd_Aves_Inicial']
+HEADERS_CONFIG = ['Data_Alojamento', 'Idade_Inicial_Semanas', 'Qtd_Aves_Inicial', 'Preco_Racao_Kg']
 HEADERS_MOVIMENTACOES = ['Data', 'Descricao', 'Categoria', 'Tipo', 'Valor']
 HEADERS_PRODUCAO = ['Data', 'Semana_Aves', 'Qtd_Ovos', 'Mortalidade', 'Consumo_Racao_Kg', 'Observacao']
+
+# Curva padrão Hy-Line Brown - % Postura por Semana
+CURVA_PADRAO = {
+    18: 5, 19: 30, 20: 65, 21: 85, 22: 92, 23: 94, 24: 95, 25: 95, 26: 94,
+    27: 93, 28: 92, 29: 91, 30: 90, 31: 89, 32: 88, 33: 87, 34: 86, 35: 85,
+    36: 84, 37: 83, 38: 82, 39: 81, 40: 80, 41: 79, 42: 78, 43: 77, 44: 76,
+    45: 75, 46: 74, 47: 73, 48: 72, 49: 71, 50: 70, 51: 69, 52: 68, 53: 67,
+    54: 66, 55: 65, 56: 64, 57: 63, 58: 62, 59: 61, 60: 60, 61: 59, 62: 58,
+    63: 57, 64: 56, 65: 55, 66: 54, 67: 53, 68: 52, 69: 51, 70: 50, 71: 49,
+    72: 48, 73: 47, 74: 46, 75: 45, 76: 44, 77: 43, 78: 42, 79: 41, 80: 40
+}
 
 scopes = ["https://www.googleapis.com/auth/spreadsheets","https://www.googleapis.com/auth/drive"]
 service_account_info = dict(st.secrets["gcp_service_account"])
@@ -65,10 +76,10 @@ def append_row(sheet_name, row_data):
 def delete_row(sheet_name, row_index):
     spreadsheet = get_gsheet()
     sheet = spreadsheet.worksheet(sheet_name)
-    sheet.delete_rows(row_index + 2) # +2 por causa do header e índice 0
+    sheet.delete_rows(row_index + 2)
     st.cache_data.clear()
 
-def gerar_pdf_dre(mes, receitas, custos, despesas, lucro_liquido, margem, total_ovos, aves_vivas, postura_perc, conversao, mortalidade_perc):
+def gerar_pdf_dre(mes, receitas, custos, despesas, lucro_liquido, margem, total_ovos, aves_vivas, postura_perc, conversao, mortalidade_perc, custo_racao):
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4)
     styles = getSampleStyleSheet()
@@ -81,6 +92,7 @@ def gerar_pdf_dre(mes, receitas, custos, despesas, lucro_liquido, margem, total_
         ['DRE FINANCEIRO', ''],
         ['Receita Total', f'R$ {receitas:,.2f}'],
         ['(-) Custos', f'R$ {custos:,.2f}'],
+        [' - Custo Ração', f'R$ {custo_racao:,.2f}'],
         ['(=) Lucro Bruto', f'R$ {receitas - custos:,.2f}'],
         ['(-) Despesas', f'R$ {despesas:,.2f}'],
         ['(=) Lucro Líquido', f'R$ {lucro_liquido:,.2f}'],
@@ -138,12 +150,17 @@ if not df_prod.empty:
     df_prod.dropna(subset=['Data'], inplace=True)
     for col in ['Qtd_Ovos', 'Mortalidade', 'Consumo_Racao_Kg', 'Semana_Aves']:
         df_prod[col] = pd.to_numeric(df_prod[col], errors='coerce').fillna(0)
+    # CORREÇÃO AUTOMÁTICA: Se ração > 200kg/dia, divide por 10
+    df_prod.loc[df_prod['Consumo_Racao_Kg'] > 200, 'Consumo_Racao_Kg'] = df_prod['Consumo_Racao_Kg'] / 10
     df_prod['Mes'] = df_prod['Data'].dt.strftime('%Y-%m')
 
 qtd_aves_inicial = 0
+preco_racao_kg = 0
 if not df_config.empty:
     df_config['Qtd_Aves_Inicial'] = pd.to_numeric(df_config['Qtd_Aves_Inicial'], errors='coerce').fillna(0)
+    df_config['Preco_Racao_Kg'] = pd.to_numeric(df_config.get('Preco_Racao_Kg', 0), errors='coerce').fillna(0)
     qtd_aves_inicial = df_config['Qtd_Aves_Inicial'].iloc[-1] if not df_config.empty else 0
+    preco_racao_kg = df_config['Preco_Racao_Kg'].iloc[-1] if 'Preco_Racao_Kg' in df_config.columns else 0
 
 meses_mov = df_mov['Mes'].unique() if not df_mov.empty else []
 meses_prod = df_prod['Mes'].unique() if not df_prod.empty else []
@@ -193,8 +210,9 @@ with st.sidebar.expander("Configurar Lote Inicial"):
         data_aloj = st.date_input("Data Alojamento")
         idade_ini = st.number_input("Idade Inicial em Semanas", min_value=1, step=1)
         qtd_aves = st.number_input("Qtd Aves Inicial", min_value=1, step=1)
+        preco_racao = st.number_input("Preço Ração R$/Kg", min_value=0.0, format="%.2f", value=float(preco_racao_kg))
         if st.form_submit_button("Salvar Config"):
-            nova_linha = [data_aloj.strftime('%d/%m/%Y'), idade_ini, qtd_aves]
+            nova_linha = [data_aloj.strftime('%d/%m/%Y'), idade_ini, qtd_aves, preco_racao]
             append_row("CONFIG", nova_linha)
             st.sidebar.success("Config salva!")
             st.rerun()
@@ -202,16 +220,21 @@ with st.sidebar.expander("Configurar Lote Inicial"):
 st.header(f"Dashboard - {mes_selecionado}")
 
 receitas = df_mov_filtrado[df_mov_filtrado['Tipo'] == 'Entrada']['Valor'].sum()
-custos = df_mov_filtrado[(df_mov_filtrado['Tipo'].isin(['Saida', 'Saída'])) & (df_mov_filtrado['Categoria'] == 'Custo')]['Valor'].sum()
+custos_manual = df_mov_filtrado[(df_mov_filtrado['Tipo'].isin(['Saida', 'Saída'])) & (df_mov_filtrado['Categoria'] == 'Custo')]['Valor'].sum()
 despesas = df_mov_filtrado[(df_mov_filtrado['Tipo'].isin(['Saida', 'Saída'])) & (df_mov_filtrado['Categoria'] == 'Despesa')]['Valor'].sum()
-lucro_bruto = receitas - custos
-lucro_liquido = lucro_bruto - despesas
-margem = (lucro_liquido / receitas * 100) if receitas > 0 else 0
 
 total_ovos = df_prod_mes['Qtd_Ovos'].sum()
 total_mortalidade = df_prod_mes['Mortalidade'].sum()
 total_racao = df_prod_mes['Consumo_Racao_Kg'].sum()
 aves_vivas = qtd_aves_inicial - total_mortalidade
+
+# CUSTO DE RAÇÃO AUTOMÁTICO
+custo_racao = total_racao * preco_racao_kg
+custos = custos_manual + custo_racao
+
+lucro_bruto = receitas - custos
+lucro_liquido = lucro_bruto - despesas
+margem = (lucro_liquido / receitas * 100) if receitas > 0 else 0
 
 custo_por_ovo = custos / total_ovos if total_ovos > 0 else 0
 custo_por_ave = custos / aves_vivas if aves_vivas > 0 else 0
@@ -235,7 +258,7 @@ if len(df_prod_mes) >= 2:
 st.subheader("📊 Resumo Financeiro")
 col1, col2, col3 = st.columns(3)
 col1.metric("Receita Total", f"R$ {receitas:,.2f}")
-col2.metric("Custos", f"R$ {custos:,.2f}")
+col2.metric("Custos", f"R$ {custos:,.2f}", f"Custo Ração: R$ {custo_racao:,.2f}")
 col3.metric("Despesas", f"R$ {despesas:,.2f}")
 col4, col5, col6 = st.columns(3)
 col4.metric("Lucro Líquido", f"R$ {lucro_liquido:,.2f}")
@@ -253,7 +276,7 @@ col11.metric("Conversão / Dz", f"{conversao:.2f} Kg")
 col12.metric("% Postura", f"{postura_perc:.1f}%")
 
 # BOTÃO PDF
-pdf_buffer = gerar_pdf_dre(mes_selecionado, receitas, custos, despesas, lucro_liquido, margem, total_ovos, aves_vivas, postura_perc, conversao, mortalidade_perc)
+pdf_buffer = gerar_pdf_dre(mes_selecionado, receitas, custos, despesas, lucro_liquido, margem, total_ovos, aves_vivas, postura_perc, conversao, mortalidade_perc, custo_racao)
 st.download_button(
     label="📄 Exportar DRE em PDF",
     data=pdf_buffer,
@@ -271,7 +294,7 @@ with c1:
         fig.update_layout(yaxis_title="Valor (R$)", xaxis_title="")
         st.plotly_chart(fig, use_container_width=True)
 with c2:
-    st.subheader("Curva de Postura por Semana")
+    st.subheader("Curva de Postura: Real vs Padrão")
     if not df_prod_mes.empty:
         df_postura_dia = df_prod_mes.copy()
         df_postura_dia['Aves_Dia'] = qtd_aves_inicial - df_postura_dia['Mortalidade'].cumsum()
@@ -280,23 +303,43 @@ with c2:
 
         fig2 = go.Figure()
         fig2.add_trace(go.Scatter(x=df_postura['Semana_Aves'], y=df_postura['Postura_Dia'],
-                                  mode='lines+markers', name='% Postura Real'))
-        fig2.add_hline(y=85, line_dash="dash", line_color="red", annotation_text="Meta 85%")
+                                  mode='lines+markers', name='% Postura Real', line=dict(color='#2ECC71', width=3)))
+
+        # CURVA PADRÃO
+        semanas_padrao = sorted(CURVA_PADRAO.keys())
+        postura_padrao = [CURVA_PADRAO[s] for s in semanas_padrao]
+        fig2.add_trace(go.Scatter(x=semanas_padrao, y=postura_padrao,
+                                  mode='lines', name='Padrão Hy-Line', line=dict(color='red', dash='dash')))
+
         fig2.update_layout(yaxis_title="% Postura", xaxis_title="Semana das Aves",
-                           title="% Postura Média por Semana das Aves")
+                           title="% Postura Real vs Padrão da Linhagem")
         st.plotly_chart(fig2, use_container_width=True)
 
-# GRÁFICO NOVO: CUSTO ACUMULADO POR DÚZIA
-st.subheader("Custo Acumulado por Dúzia")
-if not df_prod_mes.empty and custos > 0:
-    df_custo_dz = df_prod_mes.sort_values('Data').copy()
-    df_custo_dz['Ovos_Acumulado'] = df_custo_dz['Qtd_Ovos'].cumsum()
-    df_custo_dz['Duzias_Acumulado'] = df_custo_dz['Ovos_Acumulado'] / 12
-    df_custo_dz['Custo_Dz'] = custos / df_custo_dz['Duzias_Acumulado']
-    fig3 = px.line(df_custo_dz, x='Data', y='Custo_Dz', markers=True,
-                   title="Evolução do Custo por Dúzia no Mês")
-    fig3.update_layout(yaxis_title="R$ / Dúzia", xaxis_title="")
-    st.plotly_chart(fig3, use_container_width=True)
+# GRÁFICO NOVO: PROJEÇÃO DO LOTE
+st.subheader("Projeção de Lucro do Lote até Semana 80")
+if not df_prod_mes.empty and postura_perc > 0:
+    semana_atual = df_prod_mes['Semana_Aves'].max()
+    semanas_futuras = list(range(int(semana_atual), 81))
+
+    # Projeta ovos baseado na média de postura atual
+    ovos_projetados = []
+    aves_projetadas = aves_vivas
+    for s in semanas_futuras:
+        if s in CURVA_PADRAO:
+            postura_esperada = postura_perc # usa a sua média atual
+            ovos_dia = (aves_projetadas * postura_esperada / 100) * 7 # 7 dias
+            ovos_projetados.append(ovos_dia)
+            aves_projetadas = aves_projetadas * 0.999 # mortalidade 0.1% semana
+
+    ovos_total_projetado = sum(ovos_projetados)
+    receita_projetada = (ovos_total_projetado / 30) * (receitas / (total_ovos/30) if total_ovos > 0 else 0.5) # estima preço médio
+    custo_projetado = (ovos_total_projetado * custo_por_ovo)
+    lucro_projetado = receita_projetada - custo_projetado
+
+    col_proj1, col_proj2, col_proj3 = st.columns(3)
+    col_proj1.metric("Ovos até Semana 80", f"{ovos_total_projetado:,.0f}")
+    col_proj2.metric("Receita Projetada", f"R$ {receita_projetada:,.2f}")
+    col_proj3.metric("Lucro Projetado", f"R$ {lucro_projetado:,.2f}")
 
 with st.expander("Ver Lançamentos Financeiros"):
     st.dataframe(df_mov_filtrado, use_container_width=True, hide_index=True)
