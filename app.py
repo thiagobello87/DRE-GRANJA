@@ -2,6 +2,7 @@ import streamlit as st
 import gspread
 from google.oauth2.service_account import Credentials
 import pandas as pd
+import plotly.express as px
 
 st.set_page_config(page_title="DRE Granja", page_icon="🐔", layout="wide")
 st.title("🐔 DRE - Granja")
@@ -29,21 +30,31 @@ try:
     # LIMPEZA E PADRONIZAÇÃO DOS DADOS
     df['Valor'] = pd.to_numeric(df['Valor'], errors='coerce').fillna(0)
     df['Data'] = pd.to_datetime(df['Data'], format='%d/%m/%Y', errors='coerce')
+    df.dropna(subset=['Data'], inplace=True)
 
-    # REMOVE ESPAÇO E PADRONIZA TEXTO PRA EVITAR ERRO DE 'Saida' vs 'Saída'
     for col in ['Descricao', 'Categoria', 'Tipo']:
         df[col] = df[col].astype(str).str.strip().str.title()
 
+    df['Mes'] = df['Data'].dt.strftime('%Y-%m')
+
     st.success("Planilha conectada!")
-    st.subheader("Lançamentos")
-    st.dataframe(df, use_container_width=True, hide_index=True)
+
+    # FILTRO POR MÊS
+    st.sidebar.header("Filtros")
+    meses_disponiveis = sorted(df['Mes'].unique(), reverse=True)
+    mes_selecionado = st.sidebar.selectbox("Selecione o Mês:", meses_disponiveis)
+
+    df_filtrado = df[df['Mes'] == mes_selecionado]
+
+    st.subheader(f"Lançamentos de {mes_selecionado}")
+    st.dataframe(df_filtrado, use_container_width=True, hide_index=True)
 
     # CÁLCULO DRE
     st.subheader("📊 Resumo DRE")
 
-    receitas = df[df['Tipo'] == 'Entrada']['Valor'].sum()
-    custos = df[(df['Tipo'].isin(['Saida', 'Saída'])) & (df['Categoria'] == 'Custo')]['Valor'].sum()
-    despesas = df[(df['Tipo'].isin(['Saida', 'Saída'])) & (df['Categoria'] == 'Despesa')]['Valor'].sum()
+    receitas = df_filtrado[df_filtrado['Tipo'] == 'Entrada']['Valor'].sum()
+    custos = df_filtrado[(df_filtrado['Tipo'].isin(['Saida', 'Saída'])) & (df_filtrado['Categoria'] == 'Custo')]['Valor'].sum()
+    despesas = df_filtrado[(df_filtrado['Tipo'].isin(['Saida', 'Saída'])) & (df_filtrado['Categoria'] == 'Despesa')]['Valor'].sum()
 
     lucro_bruto = receitas - custos
     lucro_liquido = lucro_bruto - despesas
@@ -58,6 +69,17 @@ try:
     col4.metric("Lucro Bruto", f"R$ {lucro_bruto:,.2f}")
     col5.metric("Lucro Líquido", f"R$ {lucro_liquido:,.2f}")
     col6.metric("Margem Líquida", f"{margem:.1f}%")
+
+    # GRÁFICO
+    st.subheader("Gráfico por Categoria")
+    if not df_filtrado.empty:
+        fig = px.bar(df_filtrado, x='Categoria', y='Valor', color='Tipo',
+                     barmode='group', text_auto='.2s',
+                     color_discrete_map={'Entrada':'#2ECC71', 'Saida':'#E74C3C', 'Saída':'#E74C3C'})
+        fig.update_layout(yaxis_title="Valor (R$)", xaxis_title="")
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("Sem dados para o mês selecionado.")
 
     # DRE DETALHADO
     st.subheader("DRE Detalhado")
