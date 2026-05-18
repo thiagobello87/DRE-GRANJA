@@ -8,7 +8,6 @@ from datetime import date
 st.set_page_config(page_title="DRE Granja", page_icon="🐔", layout="wide")
 st.title("🐔 Sistema DRE - Granja")
 
-# CABEÇALHOS DAS 3 ABAS
 HEADERS_CONFIG = ['Data_Alojamento', 'Idade_Inicial_Semanas', 'Qtd_Aves_Inicial']
 HEADERS_MOVIMENTACOES = ['Data', 'Descricao', 'Categoria', 'Tipo', 'Valor']
 HEADERS_PRODUCAO = ['Data', 'Semana_Aves', 'Qtd_Ovos', 'Mortalidade', 'Consumo_Racao_Kg', 'Observacao']
@@ -51,7 +50,6 @@ def append_row(sheet_name, row_data):
     sheet.append_row(row_data, value_input_option='USER_ENTERED')
     st.cache_data.clear()
 
-# CARREGA DADOS
 try:
     df_config, df_mov, df_prod = load_data()
 except Exception as e:
@@ -61,7 +59,7 @@ except Exception as e:
 # TRATAMENTO MOVIMENTACOES
 if not df_mov.empty:
     df_mov['Valor'] = pd.to_numeric(df_mov['Valor'], errors='coerce').fillna(0)
-    df_mov['Data'] = pd.to_datetime(df_mov['Data'], format='%d/%m/%Y', errors='coerce')
+    df_mov['Data'] = pd.to_datetime(df_mov['Data'], dayfirst=True, errors='coerce')
     df_mov.dropna(subset=['Data'], inplace=True)
     for col in ['Descricao', 'Categoria', 'Tipo']:
         df_mov[col] = df_mov[col].astype(str).str.strip().str.title()
@@ -69,11 +67,12 @@ if not df_mov.empty:
 
 # TRATAMENTO PRODUCAO
 if not df_prod.empty:
-    df_prod['Data'] = pd.to_datetime(df_prod['Data'], format='%d/%m/%Y', errors='coerce')
+    # dayfirst=True aceita 18/05/2026 em vez de 05/18/2026
+    df_prod['Data'] = pd.to_datetime(df_prod['Data'], dayfirst=True, errors='coerce')
     df_prod.dropna(subset=['Data'], inplace=True)
     for col in ['Qtd_Ovos', 'Mortalidade', 'Consumo_Racao_Kg', 'Semana_Aves']:
         df_prod[col] = pd.to_numeric(df_prod[col], errors='coerce').fillna(0)
-    df_prod['Mes'] = df_prod['Data'].dt.strftime('%Y-%m') # ADICIONEI AQUI
+    df_prod['Mes'] = df_prod['Data'].dt.strftime('%Y-%m')
 
 # TRATAMENTO CONFIG
 qtd_aves_inicial = 0
@@ -81,22 +80,23 @@ if not df_config.empty:
     df_config['Qtd_Aves_Inicial'] = pd.to_numeric(df_config['Qtd_Aves_Inicial'], errors='coerce').fillna(0)
     qtd_aves_inicial = df_config['Qtd_Aves_Inicial'].iloc[-1] if not df_config.empty else 0
 
-# SIDEBAR - FILTROS E CADASTROS
+# FILTRO USA MESES DE MOVIMENTACOES E PRODUCAO
+meses_mov = df_mov['Mes'].unique() if not df_mov.empty else []
+meses_prod = df_prod['Mes'].unique() if not df_prod.empty else []
+meses_disponiveis = sorted(list(set(list(meses_mov) + list(meses_prod))), reverse=True)
+
 st.sidebar.header("Filtros")
-if not df_mov.empty:
-    meses_disponiveis = sorted(df_mov['Mes'].unique(), reverse=True)
+if meses_disponiveis:
     mes_selecionado = st.sidebar.selectbox("Selecione o Mês:", meses_disponiveis)
-    df_mov_filtrado = df_mov[df_mov['Mes'] == mes_selecionado]
-    # FILTRA PRODUÇÃO PELO MESMO MÊS - CORREÇÃO AQUI
-    df_prod_mes = df_prod[df_prod['Mes'] == mes_selecionado] if not df_prod.empty else pd.DataFrame(columns=HEADERS_PRODUCAO)
 else:
     mes_selecionado = date.today().strftime('%Y-%m')
-    df_mov_filtrado = pd.DataFrame(columns=HEADERS_MOVIMENTACOES)
-    df_prod_mes = pd.DataFrame(columns=HEADERS_PRODUCAO)
+    st.sidebar.info("Sem dados ainda")
+
+df_mov_filtrado = df_mov[df_mov['Mes'] == mes_selecionado] if not df_mov.empty else pd.DataFrame(columns=HEADERS_MOVIMENTACOES)
+df_prod_mes = df_prod[df_prod['Mes'] == mes_selecionado] if not df_prod.empty else pd.DataFrame(columns=HEADERS_PRODUCAO)
 
 st.sidebar.header("Lançamentos Rápidos")
 
-# FORMULÁRIO MOVIMENTAÇÃO FINANCEIRA
 with st.sidebar.form("form_mov", clear_on_submit=True):
     st.subheader("Financeiro")
     data_mov = st.date_input("Data", value=date.today())
@@ -110,7 +110,6 @@ with st.sidebar.form("form_mov", clear_on_submit=True):
         st.sidebar.success("Salvo!")
         st.rerun()
 
-# FORMULÁRIO PRODUÇÃO DIÁRIA
 with st.sidebar.form("form_prod", clear_on_submit=True):
     st.subheader("Produção Diária")
     data_prod = st.date_input("Data Produção", value=date.today())
@@ -125,7 +124,6 @@ with st.sidebar.form("form_prod", clear_on_submit=True):
         st.sidebar.success("Salvo!")
         st.rerun()
 
-# FORMULÁRIO CONFIG INICIAL
 with st.sidebar.expander("Configurar Lote Inicial"):
     with st.form("form_config", clear_on_submit=True):
         data_aloj = st.date_input("Data Alojamento")
@@ -137,7 +135,6 @@ with st.sidebar.expander("Configurar Lote Inicial"):
             st.sidebar.success("Config salva!")
             st.rerun()
 
-# DASHBOARD PRINCIPAL
 st.header(f"Dashboard - {mes_selecionado}")
 
 # CÁLCULOS DRE
@@ -148,7 +145,7 @@ lucro_bruto = receitas - custos
 lucro_liquido = lucro_bruto - despesas
 margem = (lucro_liquido / receitas * 100) if receitas > 0 else 0
 
-# CÁLCULOS PRODUÇÃO - df_prod_mes JÁ ESTÁ FILTRADO
+# CÁLCULOS PRODUÇÃO
 total_ovos = df_prod_mes['Qtd_Ovos'].sum()
 total_mortalidade = df_prod_mes['Mortalidade'].sum()
 total_racao = df_prod_mes['Consumo_Racao_Kg'].sum()
@@ -158,6 +155,14 @@ custo_por_ovo = custos / total_ovos if total_ovos > 0 else 0
 custo_por_ave = custos / aves_vivas if aves_vivas > 0 else 0
 mortalidade_perc = (total_mortalidade / qtd_aves_inicial * 100) if qtd_aves_inicial > 0 else 0
 postura_perc = (total_ovos / (aves_vivas * 30) * 100) if aves_vivas > 0 else 0
+
+# DEBUG - APAGA DEPOIS QUE FUNCIONAR
+with st.expander("DEBUG - Ver dados brutos"):
+    st.write("CONFIG:", df_config)
+    st.write("PRODUCAO:", df_prod)
+    st.write("PROD_MES:", df_prod_mes)
+    st.write("Mes selecionado:", mes_selecionado)
+    st.write("Qtd Aves Inicial:", qtd_aves_inicial)
 
 # MÉTRICAS FINANCEIRAS
 st.subheader("📊 Resumo Financeiro")
