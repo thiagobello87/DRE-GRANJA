@@ -56,7 +56,6 @@ except Exception as e:
     st.error(f"Erro ao conectar: {e}")
     st.stop()
 
-# TRATAMENTO MOVIMENTACOES
 if not df_mov.empty:
     df_mov['Valor'] = pd.to_numeric(df_mov['Valor'], errors='coerce').fillna(0)
     df_mov['Data'] = pd.to_datetime(df_mov['Data'], dayfirst=True, errors='coerce')
@@ -65,22 +64,18 @@ if not df_mov.empty:
         df_mov[col] = df_mov[col].astype(str).str.strip().str.title()
     df_mov['Mes'] = df_mov['Data'].dt.strftime('%Y-%m')
 
-# TRATAMENTO PRODUCAO
 if not df_prod.empty:
-    # dayfirst=True aceita 18/05/2026 em vez de 05/18/2026
     df_prod['Data'] = pd.to_datetime(df_prod['Data'], dayfirst=True, errors='coerce')
     df_prod.dropna(subset=['Data'], inplace=True)
     for col in ['Qtd_Ovos', 'Mortalidade', 'Consumo_Racao_Kg', 'Semana_Aves']:
         df_prod[col] = pd.to_numeric(df_prod[col], errors='coerce').fillna(0)
     df_prod['Mes'] = df_prod['Data'].dt.strftime('%Y-%m')
 
-# TRATAMENTO CONFIG
 qtd_aves_inicial = 0
 if not df_config.empty:
     df_config['Qtd_Aves_Inicial'] = pd.to_numeric(df_config['Qtd_Aves_Inicial'], errors='coerce').fillna(0)
     qtd_aves_inicial = df_config['Qtd_Aves_Inicial'].iloc[-1] if not df_config.empty else 0
 
-# FILTRO USA MESES DE MOVIMENTACOES E PRODUCAO
 meses_mov = df_mov['Mes'].unique() if not df_mov.empty else []
 meses_prod = df_prod['Mes'].unique() if not df_prod.empty else []
 meses_disponiveis = sorted(list(set(list(meses_mov) + list(meses_prod))), reverse=True)
@@ -137,7 +132,6 @@ with st.sidebar.expander("Configurar Lote Inicial"):
 
 st.header(f"Dashboard - {mes_selecionado}")
 
-# CÁLCULOS DRE
 receitas = df_mov_filtrado[df_mov_filtrado['Tipo'] == 'Entrada']['Valor'].sum()
 custos = df_mov_filtrado[(df_mov_filtrado['Tipo'].isin(['Saida', 'Saída'])) & (df_mov_filtrado['Categoria'] == 'Custo')]['Valor'].sum()
 despesas = df_mov_filtrado[(df_mov_filtrado['Tipo'].isin(['Saida', 'Saída'])) & (df_mov_filtrado['Categoria'] == 'Despesa')]['Valor'].sum()
@@ -145,7 +139,6 @@ lucro_bruto = receitas - custos
 lucro_liquido = lucro_bruto - despesas
 margem = (lucro_liquido / receitas * 100) if receitas > 0 else 0
 
-# CÁLCULOS PRODUÇÃO
 total_ovos = df_prod_mes['Qtd_Ovos'].sum()
 total_mortalidade = df_prod_mes['Mortalidade'].sum()
 total_racao = df_prod_mes['Consumo_Racao_Kg'].sum()
@@ -156,15 +149,14 @@ custo_por_ave = custos / aves_vivas if aves_vivas > 0 else 0
 mortalidade_perc = (total_mortalidade / qtd_aves_inicial * 100) if qtd_aves_inicial > 0 else 0
 postura_perc = (total_ovos / (aves_vivas * 30) * 100) if aves_vivas > 0 else 0
 
-# DEBUG - APAGA DEPOIS QUE FUNCIONAR
-with st.expander("DEBUG - Ver dados brutos"):
-    st.write("CONFIG:", df_config)
-    st.write("PRODUCAO:", df_prod)
-    st.write("PROD_MES:", df_prod_mes)
-    st.write("Mes selecionado:", mes_selecionado)
-    st.write("Qtd Aves Inicial:", qtd_aves_inicial)
+# DEBUG FICA AQUI - ENTRE INDICADORES E GRÁFICOS
+with st.expander("🔍 DEBUG - Ver dados brutos", expanded=False):
+    st.write("**CONFIG:**", df_config)
+    st.write("**PRODUCAO COMPLETA:**", df_prod)
+    st.write("**PRODUCAO DO MÊS FILTRADO:**", df_prod_mes)
+    st.write("**Mês selecionado no filtro:**", mes_selecionado)
+    st.write("**Qtd Aves Inicial lida da planilha:**", qtd_aves_inicial)
 
-# MÉTRICAS FINANCEIRAS
 st.subheader("📊 Resumo Financeiro")
 col1, col2, col3 = st.columns(3)
 col1.metric("Receita Total", f"R$ {receitas:,.2f}")
@@ -175,7 +167,6 @@ col4.metric("Lucro Líquido", f"R$ {lucro_liquido:,.2f}")
 col5.metric("Margem Líquida", f"{margem:.1f}%")
 col6.metric("Custo por Ovo", f"R$ {custo_por_ovo:.3f}")
 
-# MÉTRICAS ZOOTÉCNICAS
 st.subheader("🐔 Indicadores de Produção")
 col7, col8, col9 = st.columns(3)
 col7.metric("Total de Ovos", f"{total_ovos:,.0f}")
@@ -186,7 +177,6 @@ col10.metric("Consumo Ração", f"{total_racao:,.1f} Kg")
 col11.metric("Custo por Ave", f"R$ {custo_por_ave:.2f}")
 col12.metric("% Postura Mês", f"{postura_perc:.1f}%")
 
-# GRÁFICOS
 c1, c2 = st.columns(2)
 with c1:
     st.subheader("Financeiro por Categoria")
@@ -203,7 +193,6 @@ with c2:
                        title="Ovos por Dia")
         st.plotly_chart(fig2, use_container_width=True)
 
-# TABELAS
 with st.expander("Ver Lançamentos Financeiros"):
     st.dataframe(df_mov_filtrado, use_container_width=True, hide_index=True)
 with st.expander("Ver Dados de Produção"):
