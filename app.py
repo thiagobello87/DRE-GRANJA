@@ -77,9 +77,14 @@ with tab3:
     st.subheader("Configuração do Lote Atual")
     col1, col2 = st.columns(2)
     with col1:
-    # Corrige erro quando a planilha está vazia
-if 'CONFIG' in dados and not dados['CONFIG'].empty and 'Data_Alojamento' in dados['CONFIG'].columns:
-    data_padrao = dados['CONFIG']['Data_Alojamento'].iloc[0]
+        # Corrige erro quando a planilha está vazia
+    if 'CONFIG' in dados and not dados['CONFIG'].empty and 'Data_Alojamento' in dados['CONFIG'].columns:
+        data_padrao = dados['CONFIG']['Data_Alojamento'].iloc[0]
+    else:
+        from datetime import date
+        data_padrao = date.today()
+
+    data_aloj = st.date_input("Data de Alojamento", value=data_padrao)
 else:
     from datetime import date
     data_padrao = date.today()
