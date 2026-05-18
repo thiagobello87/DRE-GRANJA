@@ -1,145 +1,219 @@
-import os
+import streamlit as st
+import pandas as pd
 import gspread
 from google.oauth2.service_account import Credentials
-import pandas as pd
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
-from datetime import datetime
+from datetime import datetime, date
+from fpdf import FPDF
+import io
 
-# CONFIGURA AQUI
-TOKEN = "SEU_TOKEN_AQUI" # Troca pelo token do @BotFather
-SEU_TELEGRAM_ID = 1162972058 # Já tá o seu
+st.set_page_config(page_title="DRE Avícola V2.3", page_icon="🐔", layout="wide")
+
 SHEET_NAME = "DRE-Granja-Dados"
 HEADERS_DIARIO = ['Data', 'Ovos_Coletados', 'Mortalidade', 'Consumo_Racao_Kg', 'Receita_Venda_Ovos', 'Custos_Dia', 'Despesas_Dia', 'Observacoes']
 HEADERS_CONFIG = ['Data_Alojamento', 'Idade_Inicial_Semanas', 'Qtd_Aves_Inicial', 'Preco_Racao_Kg']
 
-def connect_gsheet():
+@st.cache_resource
+def connect_to_gsheet():
     scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
-    creds = Credentials.from_service_account_info(eval(os.environ["GCP_CREDS"]), scopes=scopes)
+    creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
     client = gspread.authorize(creds)
     return client.open(SHEET_NAME)
 
-def to_numeric_br(val):
-    return pd.to_numeric(str(val).replace(',', '.'), errors='coerce')
+spreadsheet = connect_to_gsheet()
 
-def check_auth(update: Update):
-    if update.effective_user.id!= SEU_TELEGRAM_ID:
-        return False
-    return True
+def normalize_header(header):
+    return str(header).strip().lower().replace(' ', '_').replace('ç','c').replace('ã','a').replace('õ','o')
 
-def calc_resumo_dia(df_diario, df_config):
-    if df_diario.empty or df_config.empty: return None
-    preco_racao = to_numeric_br(df_config['Preco_Racao_Kg'].iloc[-1])
-    qtd_aves_ini = int(to_numeric_br(df_config['Qtd_Aves_Inicial'].iloc[-1]))
+def to_numeric_br(series):
+    return pd.to_numeric(series.astype(str).str.replace(',', '.', regex=False), errors='coerce').fillna(0)
 
-    df = df_diario.copy()
-    for col in ['Ovos_Coletados', 'Mortalidade', 'Consumo_Racao_Kg', 'Receita_Venda_Ovos', 'Custos_Dia', 'Despesas_Dia']:
-        df[col] = df[col].apply(to_numeric_br).fillna(0)
-
-    df['Aves_Vivas'] = qtd_aves_ini - df['Mortalidade'].cumsum()
-    df['Custo_Racao'] = df['Consumo_Racao_Kg'] * preco_racao
-    df['Custo_Total'] = df['Custos_Dia'] + df['Custo_Racao']
-
-    ultima = df.iloc[-1]
-    postura = (ultima['Ovos_Coletados'] / ultima['Aves_Vivas'] * 100) if ultima['Aves_Vivas'] > 0 else 0
-    conversao = (ultima['Consumo_Racao_Kg'] / (ultima['Ovos_Coletados'] / 12)) if ultima['Ovos_Coletados'] > 0 else 0
-    lucro = ultima['Receita_Venda_Ovos'] - ultima['Custo_Total'] - ultima['Despesas_Dia']
-
-    alerta = ""
-    if len(df) >= 2:
-        postura_ontem = (df.iloc[-2]['Ovos_Coletados'] / (qtd_aves_ini - df['Mortalidade'].cumsum().iloc[-2]) * 100)
-        if postura_ontem - postura > 5:
-            alerta = f"\n⚠️ ALERTA: Queda de {postura_ontem - postura:.1f}% na postura!"
-    if conversao > 2.6:
-        alerta += f"\n⚠️ Conversão {conversao:.2f} Kg/Dz acima da meta 2.6"
-
-    return f"Ovos: {int(ultima['Ovos_Coletados'])} | Postura: {postura:.1f}%\nCusto Ração: R$ {ultima['Custo_Racao']:.2f}\nCusto Total: R$ {ultima['Custo_Total']:.2f}\nLucro do Dia: R$ {lucro:.2f}{alerta}"
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not check_auth(update): return
-    await update.message.reply_text("🐔 DRE Granja Bot online!\n\n/lancar ovos mort racao receita custos despesas obs\n/dre - Resumo total\n/postura - Últimos 7 dias\n/config - Ver lote\n/ajuda")
-
-async def lancar(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not check_auth(update):
-        await update.message.reply_text("Acesso negado.")
-        return
+def load_sheet_as_df(worksheet_name, headers):
     try:
-        args = context.args
-        if len(args) < 7: raise ValueError("Faltam dados")
-        ovos, mort, racao, receita, custos, despesas = map(lambda x: x.replace(',', '.'), args[:6])
-        obs = " ".join(args[6:])
-        data = datetime.now().strftime('%Y-%m-%d')
-
-        ss = connect_gsheet()
-        ws = ss.worksheet('DIARIO')
-        ws.append_row([data, ovos, mort, racao, receita, custos, despesas, obs])
-
-        df_d = pd.DataFrame(ws.get_all_records())
-        df_c = pd.DataFrame(ss.worksheet('CONFIG').get_all_records())
-        resumo = calc_resumo_dia(df_d, df_c)
-
-        await update.message.reply_text(f"✅ Lançamento salvo {datetime.now().strftime('%d/%m/%Y')}\n\n{resumo}")
+        worksheet = spreadsheet.worksheet(worksheet_name)
+        data = worksheet.get_all_records()
+        df = pd.DataFrame(data)
+        df.columns = [normalize_header(col) for col in df.columns]
+        headers_norm = {normalize_header(h): h for h in headers}
+        df = df.rename(columns={col: headers_norm[col] for col in df.columns if col in headers_norm})
+        for col in headers:
+            if col not in df.columns:
+                df[col] = None
+        return df[headers]
+    except gspread.exceptions.WorksheetNotFound:
+        worksheet = spreadsheet.add_worksheet(title=worksheet_name, rows="1000", cols=len(headers))
+        worksheet.append_row(headers)
+        return pd.DataFrame(columns=headers)
     except Exception as e:
-        await update.message.reply_text(f"❌ Erro: {e}\nFormato: /lancar 684 2 165.8 800 200 0 texto")
+        st.error(f"Erro ao carregar aba {worksheet_name}: {e}")
+        return pd.DataFrame(columns=headers)
 
-async def dre(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not check_auth(update): return
-    ss = connect_gsheet()
-    df_d = pd.DataFrame(ss.worksheet('DIARIO').get_all_records())
-    df_c = pd.DataFrame(ss.worksheet('CONFIG').get_all_records())
-    if df_d.empty:
-        await update.message.reply_text("Sem lançamentos ainda.")
-        return
+def save_to_gsheet(df, worksheet_name):
+    try:
+        worksheet = spreadsheet.worksheet(worksheet_name)
+        worksheet.clear()
+        df_str = df.fillna('').astype(str)
+        worksheet.update([df_str.columns.values.tolist()] + df_str.values.tolist())
+    except Exception as e:
+        st.error(f"Erro ao salvar na aba {worksheet_name}: {e}")
 
-    preco_racao = to_numeric_br(df_c['Preco_Racao_Kg'].iloc[-1])
-    for col in ['Ovos_Coletados', 'Consumo_Racao_Kg', 'Receita_Venda_Ovos', 'Custos_Dia', 'Despesas_Dia']:
-        df_d[col] = df_d[col].apply(to_numeric_br).fillna(0)
+def append_row_to_gsheet(data_row, worksheet_name):
+    try:
+        worksheet = spreadsheet.worksheet(worksheet_name)
+        worksheet.append_row(data_row)
+    except Exception as e:
+        st.error(f"Erro ao adicionar linha na aba {worksheet_name}: {e}")
 
-    rec = df_d['Receita_Venda_Ovos'].sum()
-    cus_racao = (df_d['Consumo_Racao_Kg'] * preco_racao).sum()
-    cus_total = cus_racao + df_d['Custos_Dia'].sum()
-    desp = df_d['Despesas_Dia'].sum()
-    lucro = rec - cus_total - desp
-    margem = (lucro / rec * 100) if rec > 0 else 0
+df_diario = load_sheet_as_df('DIARIO', HEADERS_DIARIO)
+df_config = load_sheet_as_df('CONFIG', HEADERS_CONFIG)
 
-    await update.message.reply_text(f"📊 DRE TOTAL\n\nReceita: R$ {rec:.2f}\nCustos: R$ {cus_total:.2f}\n- Ração: R$ {cus_racao:.2f}\nDespesas: R$ {desp:.2f}\nLucro: R$ {lucro:.2f}\nMargem: {margem:.1f}%")
+qtd_aves_inicial = 0
+preco_racao_kg = 0.0
+data_alojamento = date.today()
+idade_inicial_semanas = 0
 
-async def postura(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not check_auth(update): return
-    ss = connect_gsheet()
-    df_d = pd.DataFrame(ss.worksheet('DIARIO').get_all_records())
-    df_c = pd.DataFrame(ss.worksheet('CONFIG').get_all_records())
-    if df_d.empty:
-        await update.message.reply_text("Sem lançamentos.")
-        return
+if not df_config.empty:
+    if 'Qtd_Aves_Inicial' in df_config.columns:
+        qtd_aves_inicial = int(to_numeric_br(df_config['Qtd_Aves_Inicial']).iloc[-1])
+    if 'Preco_Racao_Kg' in df_config.columns:
+        preco_racao_kg = float(to_numeric_br(df_config['Preco_Racao_Kg']).iloc[-1])
+    if 'Data_Alojamento' in df_config.columns:
+        try:
+            data_alojamento = pd.to_datetime(df_config['Data_Alojamento'].iloc[-1]).date()
+        except:
+            data_alojamento = date.today()
+    if 'Idade_Inicial_Semanas' in df_config.columns:
+        idade_inicial_semanas = int(to_numeric_br(df_config['Idade_Inicial_Semanas']).iloc[-1])
 
-    qtd_aves = int(to_numeric_br(df_c['Qtd_Aves_Inicial'].iloc[-1]))
-    df_d['Ovos_Coletados'] = df_d['Ovos_Coletados'].apply(to_numeric_br)
-    df_d['Mortalidade'] = df_d['Mortalidade'].apply(to_numeric_br)
-    df_d['Aves_Vivas'] = qtd_aves - df_d['Mortalidade'].cumsum()
-    df_d['Postura'] = (df_d['Ovos_Coletados'] / df_d['Aves_Vivas'] * 100).fillna(0)
+if not df_diario.empty:
+    df_diario['Data'] = pd.to_datetime(df_diario['Data'], errors='coerce')
+    df_diario = df_diario.dropna(subset=['Data'])
+    df_diario = df_diario.sort_values('Data')
+    numeric_cols = ['Ovos_Coletados', 'Mortalidade', 'Consumo_Racao_Kg', 'Receita_Venda_Ovos', 'Custos_Dia', 'Despesas_Dia']
+    for col in numeric_cols:
+        df_diario[col] = to_numeric_br(df_diario[col])
+    df_diario['Aves_Vivas'] = qtd_aves_inicial - df_diario['Mortalidade'].cumsum()
+    df_diario['%_Postura'] = (df_diario['Ovos_Coletados'] / df_diario['Aves_Vivas'] * 100).fillna(0)
+    df_diario['Custo_Racao_Calculado'] = df_diario['Consumo_Racao_Kg'] * preco_racao_kg
+    df_diario['Custo_Total_Dia'] = df_diario['Custos_Dia'] + df_diario['Custo_Racao_Calculado']
 
-    ult7 = df_d.tail(7)
-    texto = "📈 Postura 7 dias:\n" + "\n".join([f"{row['Data']}: {row['Postura']:.1f}%" for _, row in ult7.iterrows()])
-    await update.message.reply_text(texto)
+with st.sidebar:
+    st.header("📝 Lançamento Rápido")
+    with st.form("form_lancamento", clear_on_submit=True):
+        data_lanc = st.date_input("Data", value=date.today())
+        ovos = st.number_input("Ovos Coletados", min_value=0, step=1)
+        mort = st.number_input("Mortalidade", min_value=0, step=1)
+        racao = st.number_input("Consumo Ração Kg", min_value=0.0, step=0.1, format="%.1f")
+        receita = st.number_input("Receita Venda Ovos R$", min_value=0.0, step=0.01, format="%.2f")
+        custos = st.number_input("Outros Custos R$", min_value=0.0, step=0.01, format="%.2f")
+        despesas = st.number_input("Despesas R$", min_value=0.0, step=0.01, format="%.2f")
+        obs = st.text_area("Observações")
+        if st.form_submit_button("💾 Salvar Lançamento"):
+            nova_linha = [data_lanc.strftime('%Y-%m-%d'), ovos, mort, racao, receita, custos, despesas, obs]
+            append_row_to_gsheet(nova_linha, 'DIARIO')
+            st.success("Lançamento salvo!")
+            st.rerun()
 
-async def config(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not check_auth(update): return
-    ss = connect_gsheet()
-    df_c = pd.DataFrame(ss.worksheet('CONFIG').get_all_records())
-    if df_c.empty:
-        await update.message.reply_text("CONFIG vazia.")
-        return
-    c = df_c.iloc[-1]
-    await update.message.reply_text(f"⚙️ LOTE ATUAL\n\nData: {c['Data_Alojamento']}\nIdade Inicial: {c['Idade_Inicial_Semanas']} sem\nAves Iniciais: {c['Qtd_Aves_Inicial']}\nPreço Ração: R$ {c['Preco_Racao_Kg']}/Kg")
+    st.divider()
+    st.header("⚙️ Configurar Lote Inicial")
+    with st.form("form_config"):
+        data_aloj = st.date_input("Data Alojamento", value=data_alojamento)
+        idade_ini = st.number_input("Idade Inicial Semanas", min_value=0, value=int(idade_inicial_semanas))
+        qtd_aves = st.number_input("Qtd Aves Inicial", min_value=0, value=int(qtd_aves_inicial))
+        preco_kg = st.number_input("Preço Ração R$/Kg", min_value=0.0, value=float(preco_racao_kg), step=0.01, format="%.2f")
+        if st.form_submit_button("💾 Salvar Config"):
+            df_nova_config = pd.DataFrame([[data_aloj.strftime('%Y-%m-%d'), idade_ini, qtd_aves, preco_kg]], columns=HEADERS_CONFIG)
+            save_to_gsheet(df_nova_config, 'CONFIG')
+            st.success("Configuração salva!")
+            st.rerun()
 
-if __name__ == '__main__':
-    app = ApplicationBuilder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("ajuda", start))
-    app.add_handler(CommandHandler("lancar", lancar))
-    app.add_handler(CommandHandler("dre", dre))
-    app.add_handler(CommandHandler("postura", postura))
-    app.add_handler(CommandHandler("config", config))
-    print("Bot rodando...")
-    app.run_polling()
+st.title("🐔 DRE Avícola - Controle Financeiro")
+
+if df_diario.empty:
+    st.warning("Nenhum lançamento encontrado. Use a barra lateral para adicionar o primeiro registro.")
+    st.stop()
+
+receita_total = df_diario['Receita_Venda_Ovos'].sum()
+custo_racao_total = df_diario['Custo_Racao_Calculado'].sum()
+custos_outros_total = df_diario['Custos_Dia'].sum()
+custos_total = custo_racao_total + custos_outros_total
+despesas_total = df_diario['Despesas_Dia'].sum()
+lucro_liquido = receita_total - custos_total - despesas_total
+margem_liquida = (lucro_liquido / receita_total * 100) if receita_total > 0 else 0
+total_ovos = df_diario['Ovos_Coletados'].sum()
+custo_por_ovo = custos_total / total_ovos if total_ovos > 0 else 0
+aves_vivas_atual = int(df_diario['Aves_Vivas'].iloc[-1]) if not df_diario.empty else qtd_aves_inicial
+mortalidade_acum = df_diario['Mortalidade'].sum()
+mortalidade_perc = (mortalidade_acum / qtd_aves_inicial * 100) if qtd_aves_inicial > 0 else 0
+consumo_racao_total = df_diario['Consumo_Racao_Kg'].sum()
+conversao_dz = (consumo_racao_total / (total_ovos / 12)) if total_ovos > 0 else 0
+postura_media = df_diario['%_Postura'].mean()
+
+if len(df_diario) >= 2:
+    postura_hoje = df_diario['%_Postura'].iloc[-1]
+    postura_ontem = df_diario['%_Postura'].iloc[-2]
+    queda = postura_ontem - postura_hoje
+    if queda > 5:
+        st.error(f"⚠️ ALERTA: Queda de {queda:.1f}% na postura vs dia anterior! Último: {postura_hoje:.1f}% | Anterior: {postura_ontem:.1f}%")
+
+st.subheader("📊 Resumo Financeiro")
+col1, col2, col3 = st.columns(3)
+col1.metric("Receita Total", f"R$ {receita_total:,.2f}")
+col2.metric("Custos", f"R$ {custos_total:,.2f}", f"↑ Custo Ração: R$ {custo_racao_total:,.2f}")
+col3.metric("Despesas", f"R$ {despesas_total:,.2f}")
+col4, col5, col6 = st.columns(3)
+col4.metric("Lucro Líquido", f"R$ {lucro_liquido:,.2f}")
+col5.metric("Margem Líquida", f"{margem_liquida:.1f}%")
+col6.metric("Custo por Ovo", f"R$ {custo_por_ovo:.3f}")
+
+st.subheader("🐣 Indicadores de Produção")
+col7, col8, col9 = st.columns(3)
+col7.metric("Total de Ovos", f"{int(total_ovos):,}")
+col8.metric("Aves Vivas", f"{aves_vivas_atual:,}")
+col9.metric("Mortalidade", f"{mortalidade_perc:.2f}%")
+col10, col11, col12 = st.columns(3)
+col10.metric("Consumo Ração", f"{consumo_racao_total:,.1f} Kg")
+col11.metric("Conversão / Dz", f"{conversao_dz:.2f} Kg")
+col12.metric("% Postura", f"{postura_media:.1f}%")
+
+def gerar_pdf():
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", 'B', 16)
+    pdf.cell(0, 10, "DRE Avícola - Resumo Financeiro", ln=True, align='C')
+    pdf.set_font("Arial", '', 12)
+    pdf.ln(10)
+    pdf.cell(0, 8, f"Data do Relatório: {date.today().strftime('%d/%m/%Y')}", ln=True)
+    pdf.cell(0, 8, f"Período: {df_diario['Data'].min().strftime('%d/%m/%Y')} a {df_diario['Data'].max().strftime('%d/%m/%Y')}", ln=True)
+    pdf.ln(5)
+    pdf.set_font("Arial", 'B', 12)
+    pdf.cell(0, 8, "Resumo Financeiro", ln=True)
+    pdf.set_font("Arial", '', 12)
+    pdf.cell(0, 8, f"Receita Total: R$ {receita_total:,.2f}", ln=True)
+    pdf.cell(0, 8, f"Custos Totais: R$ {custos_total:,.2f}", ln=True)
+    pdf.cell(0, 8, f" - Custo Ração: R$ {custo_racao_total:,.2f}", ln=True)
+    pdf.cell(0, 8, f" - Outros Custos: R$ {custos_outros_total:,.2f}", ln=True)
+    pdf.cell(0, 8, f"Despesas: R$ {despesas_total:,.2f}", ln=True)
+    pdf.cell(0, 8, f"Lucro Líquido: R$ {lucro_liquido:,.2f}", ln=True)
+    pdf.cell(0, 8, f"Margem Líquida: {margem_liquida:.1f}%", ln=True)
+    pdf.ln(5)
+    pdf.set_font("Arial", 'B', 12)
+    pdf.cell(0, 8, "Indicadores de Produção", ln=True)
+    pdf.set_font("Arial", '', 12)
+    pdf.cell(0, 8, f"Total de Ovos: {int(total_ovos):,}", ln=True)
+    pdf.cell(0, 8, f"Aves Vivas: {aves_vivas_atual:,}", ln=True)
+    pdf.cell(0, 8, f"Mortalidade: {mortalidade_perc:.2f}%", ln=True)
+    pdf.cell(0, 8, f"Consumo Ração: {consumo_racao_total:,.1f} Kg", ln=True)
+    pdf.cell(0, 8, f"Conversão/Dz: {conversao_dz:.2f} Kg", ln=True)
+    pdf.cell(0, 8, f"% Postura Média: {postura_media:.1f}%", ln=True)
+    pdf.cell(0, 8, f"Custo por Ovo: R$ {custo_por_ovo:.3f}", ln=True)
+    return bytes(pdf.output())
+
+if st.button("📄 Exportar DRE em PDF"):
+    pdf_bytes = gerar_pdf()
+    st.download_button(label="⬇️ Baixar PDF", data=pdf_bytes, file_name=f"DRE_Granja_{date.today().strftime('%Y%m%d')}.pdf", mime="application/pdf")
+
+st.divider()
+st.subheader("📋 Lançamentos Diários")
+df_display = df_diario.copy()
+df_display['Data'] = df_display['Data'].dt.strftime('%d/%m/%Y')
+st.dataframe(df_display, use_container_width=True, hide_index=True)
