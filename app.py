@@ -73,6 +73,7 @@ if not df_prod.empty:
     df_prod.dropna(subset=['Data'], inplace=True)
     for col in ['Qtd_Ovos', 'Mortalidade', 'Consumo_Racao_Kg', 'Semana_Aves']:
         df_prod[col] = pd.to_numeric(df_prod[col], errors='coerce').fillna(0)
+    df_prod['Mes'] = df_prod['Data'].dt.strftime('%Y-%m') # ADICIONEI AQUI
 
 # TRATAMENTO CONFIG
 qtd_aves_inicial = 0
@@ -86,9 +87,12 @@ if not df_mov.empty:
     meses_disponiveis = sorted(df_mov['Mes'].unique(), reverse=True)
     mes_selecionado = st.sidebar.selectbox("Selecione o Mês:", meses_disponiveis)
     df_mov_filtrado = df_mov[df_mov['Mes'] == mes_selecionado]
+    # FILTRA PRODUÇÃO PELO MESMO MÊS - CORREÇÃO AQUI
+    df_prod_mes = df_prod[df_prod['Mes'] == mes_selecionado] if not df_prod.empty else pd.DataFrame(columns=HEADERS_PRODUCAO)
 else:
     mes_selecionado = date.today().strftime('%Y-%m')
     df_mov_filtrado = pd.DataFrame(columns=HEADERS_MOVIMENTACOES)
+    df_prod_mes = pd.DataFrame(columns=HEADERS_PRODUCAO)
 
 st.sidebar.header("Lançamentos Rápidos")
 
@@ -144,8 +148,7 @@ lucro_bruto = receitas - custos
 lucro_liquido = lucro_bruto - despesas
 margem = (lucro_liquido / receitas * 100) if receitas > 0 else 0
 
-# CÁLCULOS PRODUÇÃO
-df_prod_mes = df_prod[df_prod['Data'].dt.strftime('%Y-%m') == mes_selecionado] if not df_prod.empty else pd.DataFrame(columns=HEADERS_PRODUCAO)
+# CÁLCULOS PRODUÇÃO - df_prod_mes JÁ ESTÁ FILTRADO
 total_ovos = df_prod_mes['Qtd_Ovos'].sum()
 total_mortalidade = df_prod_mes['Mortalidade'].sum()
 total_racao = df_prod_mes['Consumo_Racao_Kg'].sum()
